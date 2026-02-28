@@ -1,7 +1,25 @@
 {
   "spec": "HBCE-POLICY-0001",
   "policy_pack_id": "UE-ΦΩ-001",
-  "posture": ["UE_FIRST", "AUDIT_FIRST", "FAIL_CLOSED", "HASH_ONLY", "APPEND_ONLY", "GDPR_MIN"],
+  "version": "1.1.0",
+  "posture": [
+    "UE_FIRST",
+    "AUDIT_FIRST",
+    "FAIL_CLOSED",
+    "HASH_ONLY",
+    "APPEND_ONLY",
+    "GDPR_MIN"
+  ],
+  "enforcement": {
+    "signature_required": true,
+    "signature_required_from_event_id": 2,
+    "accepted_signing": {
+      "alg": "ED25519",
+      "key_id": "JOKER-C2-RUNTIME-001",
+      "pub_ref": "keys/joker-c2.pub.json",
+      "signed_payload": "ascii(chain.entry)"
+    }
+  },
   "rules": [
     {
       "id": "REQ_IPR_OPERATOR",
@@ -17,7 +35,44 @@
       "id": "REQ_CANONICAL_TEXT",
       "if_missing": ["input.canonical", "output.canonical"],
       "action": "DENY"
+    },
+    {
+      "id": "REQ_CANONICAL_HASHES",
+      "if_missing": ["input.sha256", "output.sha256", "chain.prev", "chain.entry"],
+      "action": "DENY"
+    },
+    {
+      "id": "REQ_POLICY_PACK_ID_MATCH",
+      "if_not_equal": {
+        "path": "policy.policy_pack_id",
+        "value": "UE-ΦΩ-001"
+      },
+      "action": "DENY"
+    },
+    {
+      "id": "REQ_SIGNATURE_PRESENT",
+      "when": {
+        "min_event_id": 2
+      },
+      "if_missing": ["sign.alg", "sign.key_id", "sign.pub_ref", "sign.sig"],
+      "action": "DENY"
+    },
+    {
+      "id": "REQ_SIGNATURE_PARAMS",
+      "when": {
+        "min_event_id": 2
+      },
+      "must_equal": [
+        { "path": "sign.alg", "value": "ED25519" },
+        { "path": "sign.key_id", "value": "JOKER-C2-RUNTIME-001" },
+        { "path": "sign.pub_ref", "value": "keys/joker-c2.pub.json" }
+      ],
+      "action": "DENY"
     }
   ],
-  "notes": "Phase 0 bootstrap policy. Signature enforcement added in Phase 1."
+  "notes": [
+    "Genesis event(s) may be unsigned. From event_id >= 2, ED25519 signature is mandatory.",
+    "Verification must recompute canonical hashes and chain.entry deterministically.",
+    "Signed payload is the ASCII bytes of chain.entry (hex string) to match the Linux signing procedure."
+  ]
 }
