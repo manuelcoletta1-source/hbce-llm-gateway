@@ -1,0 +1,9 @@
+{
+  "spec": "HBCE-LM-HEAD-0001",
+  "ts": "2026-02-28T10:00:00+01:00",
+  "latest": {
+    "event_id": 1,
+    "path": "events/000001.json",
+    "entry_sha256": "3c38bc7138688b3d4afa99d635592acdd32e2d62182547c80289db5cb02e252f"
+  }
+}
