@@ -29,7 +29,8 @@
   },
   "sign": {
     "alg": "ED25519",
-    "pub": null,
-    "sig": null
+    "key_id": "JOKER-C2-RUNTIME-001",
+    "pub_ref": "keys/joker-c2.pub.json",
+    "sig": "H0BO91etnv7K/AdeSQXtOJGBhXiEVcXUZvpOktVSNcNSrKRFQLbMSOmHC6RdXb1hubwnEge5jnHfH54jjgPjDQ=="
   }
 }
