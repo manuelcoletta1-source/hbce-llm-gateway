@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Verify — HBCE LLM Gateway</title>
+  <meta name="description" content="Deterministic verification for HBCE LLM events. PASS/FAIL only. Fail-closed by design."/>
+
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#0f1620; --text:#e8eef7; --muted:#9fb0c3;
+      --line:rgba(255,255,255,.10); --accent:#00ffe1; --bad:#ff4d6d;
+      --radius:18px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+    }
+    body{margin:0; background:var(--bg); color:var(--text); font-family:var(--sans);}
+    .wrap{max-width:980px; margin:0 auto; padding:28px 18px 60px;}
+    .hero{padding:22px 18px; border:1px solid var(--line); border-radius:var(--radius); background:rgba(15,22,32,.55);}
+    .k{letter-spacing:.14em; text-transform:uppercase; font-size:.78rem; color:var(--muted);}
+    h1{margin:10px 0 8px; font-size:1.6rem;}
+    .lead{margin:0; color:var(--muted); line-height:1.55;}
+    .card{margin-top:16px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel); padding:16px;}
+    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between;}
+    .badge{font-family:var(--mono); padding:8px 10px; border-radius:999px; border:1px solid var(--line);}
+    .pass{border-color:rgba(0,255,225,.4); color:var(--accent);}
+    .fail{border-color:rgba(255,77,109,.55); color:var(--bad);}
+    pre{margin:12px 0 0; padding:12px; background:rgba(0,0,0,.25); border:1px solid var(--line); border-radius:14px; overflow:auto; font-family:var(--mono); font-size:.9rem;}
+    a{color:var(--accent); text-decoration:none;}
+    a:hover{text-decoration:underline;}
+    .muted{color:var(--muted);}
+    .small{font-size:.9rem;}
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <div class="k">VERIFY · DETERMINISTIC · FAIL-CLOSED</div>
+      <h1>HBCE LLM Gateway — Verification</h1>
+      <p class="lead">
+        PASS/FAIL only. This page recomputes hashes and chain links for the latest event referenced by <span class="muted">head.json</span>.
+      </p>
+    </section>
+
+    <section class="card">
+      <div class="row">
+        <div class="badge" id="statusBadge">RUNNING…</div>
+        <div class="badge muted small" id="metaBadge">—</div>
+      </div>
+      <pre id="log">Loading…</pre>
+    </section>
+
+    <p class="muted small" style="margin-top:14px">
+      Computation rule:
+      <span style="font-family:var(--mono)">sha256(prev|input_sha256|output_sha256|policy_pack_id|ts|ipr_ai|ipr_operator)</span>
+    </p>
+  </div>
+
+<script>
+(function(){
+  "use strict";
+
+  const $status = document.getElementById("statusBadge");
+  const $meta = document.getElementById("metaBadge");
+  const $log = document.getElementById("log");
+
+  function setStatus(ok, msg){
+    $status.textContent = msg;
+    $status.className = "badge " + (ok ? "pass" : "fail");
+  }
+
+  function log(obj){
+    $log.textContent = (typeof obj === "string") ? obj : JSON.stringify(obj, null, 2);
+  }
+
+  function toUtf8Bytes(s){ return new TextEncoder().encode(String(s)); }
+
+  async function sha256Hex(s){
+    const buf = await crypto.subtle.digest("SHA-256", toUtf8Bytes(s));
+    const arr = Array.from(new Uint8Array(buf));
+    return arr.map(b => b.toString(16).padStart(2,"0")).join("");
+  }
+
+  function normText(s){
+    return String(s ?? "").replace(/\r\n/g,"\n");
+  }
+
+  async function run(){
+    try{
+      const head = await fetch("../head.json", {cache:"no-store"}).then(r => r.json());
+      const path = head?.latest?.path;
+      if(!path) throw new Error("DENY: head.json missing latest.path");
+
+      const ev = await fetch("../" + path, {cache:"no-store"}).then(r => r.json());
+
+      const need = (k, v) => {
+        if(v === undefined || v === null || v === "") throw new Error("DENY: missing " + k);
+        return v;
+      };
+
+      const ts = need("ts", ev.ts);
+      const ipr_ai = need("ipr_ai", ev.ipr_ai);
+      const ipr_operator = need("ipr_operator", ev.ipr_operator);
+      const policy_pack_id = need("policy.policy_pack_id", ev.policy?.policy_pack_id);
+
+      const inputCanonical = need("input.canonical", ev.input?.canonical);
+      const outputCanonical = need("output.canonical", ev.output?.canonical);
+
+      const input_sha_stored = need("input.sha256", ev.input?.sha256);
+      const output_sha_stored = need("output.sha256", ev.output?.sha256);
+
+      const prev = need("chain.prev", ev.chain?.prev);
+      const entry_stored = need("chain.entry", ev.chain?.entry);
+
+      const input_sha = await sha256Hex(normText(inputCanonical));
+      const output_sha = await sha256Hex(normText(outputCanonical));
+
+      if(input_sha !== input_sha_stored) throw new Error("FAIL: input.sha256 mismatch");
+      if(output_sha !== output_sha_stored) throw new Error("FAIL: output.sha256 mismatch");
+
+      const base = [prev, input_sha, output_sha, policy_pack_id, ts, ipr_ai, ipr_operator].join("|");
+      const entry = await sha256Hex(base);
+
+      if(entry !== entry_stored) throw new Error("FAIL: chain.entry mismatch");
+
+      // Optional head cross-check
+      const headEntry = head?.latest?.entry_sha256;
+      if(headEntry && headEntry !== entry) throw new Error("FAIL: head.latest.entry_sha256 mismatch");
+
+      $meta.textContent = `event_id=${ev.event_id} · ${path}`;
+      setStatus(true, (ev.sign?.sig ? "PASS (SIGNED)" : "PASS (UNSIGNED)"));
+      log({
+        ok: true,
+        event_id: ev.event_id,
+        path,
+        input_sha256: input_sha,
+        output_sha256: output_sha,
+        entry_sha256: entry,
+        signed: Boolean(ev.sign?.sig)
+      });
+    }catch(err){
+      setStatus(false, "FAIL (DENY)");
+      $meta.textContent = "fail-closed";
+      log(String(err && err.message ? err.message : err));
+    }
+  }
+
+  run();
+})();
+</script>
+
+</body>
+</html>
