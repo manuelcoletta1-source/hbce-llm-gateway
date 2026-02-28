@@ -1,0 +1,9 @@
+# never commit private keys or signing artifacts
+joker-c2.key
+payload.txt
+sig.bin
+sig.b64
+
+# tool temp files
+.tmp_payload.txt
+.tmp_sig.bin
