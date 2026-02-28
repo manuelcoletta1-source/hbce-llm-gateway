@@ -1,0 +1,36 @@
+{
+  "spec": "HBCE-LM-EVENT-0001",
+  "event_id": 3,
+  "ts": "2026-02-28T10:20:00+01:00",
+  "ipr_ai": "IPR-AI-0001",
+  "ipr_operator": "IPR-3",
+  "provider": {
+    "name": "openai",
+    "model_id": "gpt-4.1",
+    "request_id": null
+  },
+  "policy": {
+    "policy_pack_id": "UE-ΦΩ-001",
+    "mode": "FAIL_CLOSED",
+    "notes": ["GDPR_MIN", "HASH_ONLY", "APPEND_ONLY"]
+  },
+  "input": {
+    "canonical": "HBCE bootstrap test input. Canonical text v3.",
+    "sha256": "6df7b371837ea74d2061ee28e4317d1b70d33d94c96def7d0aa3764aab9baedc"
+  },
+  "output": {
+    "canonical": "HBCE bootstrap test output. Canonical text v3.",
+    "sha256": "45c1bdc964434d5fa0b925dbbe0b9e628b8c202d8b6c7eb6a6cc40f9423a7635"
+  },
+  "chain": {
+    "prev": "79be0fb234daa45d69804e4a23ecd3ac000fb693cef9c7d891e14938d61af73a",
+    "entry": "ff441259feb62c7a877ff48c54cb8fda248997a150c991db0760be9a399d8ec6",
+    "algo": "sha256(prev|input_sha256|output_sha256|policy_pack_id|ts|ipr_ai|ipr_operator)"
+  },
+  "sign": {
+    "alg": "ED25519",
+    "key_id": "JOKER-C2-RUNTIME-001",
+    "pub_ref": "keys/joker-c2.pub.json",
+    "sig": "RqcgkZX2/y7Z0eDtxRE2zlaTbjBrMJ9aatcbAvm1QHgxuJZyZAL105llnabRUjHGszeeHI6KGqit3KW1qXdZCg=="
+  }
+}
