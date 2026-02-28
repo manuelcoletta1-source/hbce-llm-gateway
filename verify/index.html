@@ -34,9 +34,7 @@
   <section class="hero">
     <div class="k">VERIFY · POLICY ENFORCED · FAIL-CLOSED</div>
     <h1>HBCE LLM Gateway — Verification</h1>
-    <p class="lead">
-      Hash chain, signature, and policy enforcement.
-    </p>
+    <p class="lead">Hash chain, signature, and policy enforcement.</p>
   </section>
 
   <section class="card">
@@ -64,11 +62,14 @@ function log(obj){
   $log.textContent=(typeof obj==="string")?obj:JSON.stringify(obj,null,2);
 }
 
-function toBytes(s){return new TextEncoder().encode(String(s));}
+function toBytes(s){ return new TextEncoder().encode(String(s)); }
 
-async function sha256Hex(s){
-  const b=await crypto.subtle.digest("SHA-256",toBytes(s));
+async function sha256HexFromBytes(bytes){
+  const b = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");
+}
+async function sha256Hex(s){
+  return sha256HexFromBytes(toBytes(s));
 }
 
 function normalizeB64(s){
@@ -82,72 +83,134 @@ function normalizeB64(s){
 
 function b64ToBytes(b64){
   const b = normalizeB64(b64);
+  let bin;
   try{
-    const bin = atob(b);
-    return Uint8Array.from(bin, c=>c.charCodeAt(0));
-  }catch(e){
+    bin = atob(b);
+  }catch{
     throw new Error("FAIL: signature base64 decode error");
   }
+  const u8 = Uint8Array.from(bin, c=>c.charCodeAt(0));
+  return u8;
 }
 
 function pemToDer(pem){
-  const m=String(pem||"").match(/BEGIN PUBLIC KEY-----([\s\S]*?)-----END PUBLIC KEY/);
+  const m = String(pem||"").match(/BEGIN PUBLIC KEY-----([\s\S]*?)-----END PUBLIC KEY/);
   if(!m) throw new Error("DENY: invalid public key PEM");
-  const b64=m[1].replace(/\s+/g,"");
+  const b64 = m[1].replace(/\s+/g,"");
   return b64ToBytes(b64);
 }
 
-async function importKey(pem){
-  return crypto.subtle.importKey("spki",pemToDer(pem),{name:"Ed25519"},false,["verify"]);
+async function importKeyAndFingerprint(pem){
+  const der = pemToDer(pem);
+  const fp = await sha256HexFromBytes(der); // fingerprint of SPKI DER
+  const key = await crypto.subtle.importKey("spki", der, {name:"Ed25519"}, false, ["verify"]);
+  return { key, fp };
+}
+
+function withBust(url, bust){
+  const u = new URL(url, window.location.href);
+  u.searchParams.set("v", bust);
+  return u.toString();
 }
 
 try{
-  const policy=await fetch("../policy/UE-ΦΩ-001.json",{cache:"no-store"}).then(r=>r.json());
-  const head=await fetch("../head.json",{cache:"no-store"}).then(r=>r.json());
-  const ev=await fetch("../"+head.latest.path,{cache:"no-store"}).then(r=>r.json());
+  const bust = String(Date.now());
 
-  const inputHash=await sha256Hex(ev.input.canonical);
-  const outputHash=await sha256Hex(ev.output.canonical);
+  const policyUrl = withBust("../policy/UE-ΦΩ-001.json", bust);
+  const headUrl   = withBust("../head.json", bust);
 
-  if(inputHash!==ev.input.sha256) throw new Error("FAIL: input.sha256 mismatch");
-  if(outputHash!==ev.output.sha256) throw new Error("FAIL: output.sha256 mismatch");
+  const policy = await fetch(policyUrl, {cache:"no-store"}).then(r=>r.json());
+  const head   = await fetch(headUrl,   {cache:"no-store"}).then(r=>r.json());
 
-  const base=[ev.chain.prev,inputHash,outputHash,ev.policy.policy_pack_id,ev.ts,ev.ipr_ai,ev.ipr_operator].join("|");
-  const entry=await sha256Hex(base);
+  const path = head?.latest?.path;
+  if(!path) throw new Error("DENY: head.json missing latest.path");
 
-  if(entry!==ev.chain.entry) throw new Error("FAIL: chain.entry mismatch");
+  const evUrl = withBust("../" + path, bust);
+  const ev    = await fetch(evUrl, {cache:"no-store"}).then(r=>r.json());
 
-  const sigRequired=policy.enforcement.signature_required;
-  const minId=policy.enforcement.signature_required_from_event_id;
+  // recompute canonical hashes
+  const inputHash  = await sha256Hex(ev.input.canonical);
+  const outputHash = await sha256Hex(ev.output.canonical);
 
-  if(sigRequired && ev.event_id>=minId){
+  if(inputHash !== ev.input.sha256) throw new Error("FAIL: input.sha256 mismatch");
+  if(outputHash !== ev.output.sha256) throw new Error("FAIL: output.sha256 mismatch");
+
+  // recompute entry
+  const base = [
+    ev.chain.prev,
+    inputHash,
+    outputHash,
+    ev.policy.policy_pack_id,
+    ev.ts,
+    ev.ipr_ai,
+    ev.ipr_operator
+  ].join("|");
+
+  const entry = await sha256Hex(base);
+
+  if(entry !== ev.chain.entry) throw new Error("FAIL: chain.entry mismatch");
+
+  // policy enforcement
+  const sigRequired = policy.enforcement.signature_required;
+  const minId = policy.enforcement.signature_required_from_event_id;
+
+  let sigVerified = null;
+  let sigLen = null;
+  let entryLen = null;
+  let keyFp = null;
+
+  if(sigRequired && ev.event_id >= minId){
     if(!ev.sign || !ev.sign.sig) throw new Error("DENY: signature required");
 
-    if(ev.sign.alg!==policy.enforcement.accepted_signing.alg) throw new Error("DENY: invalid signing algorithm");
-    if(ev.sign.key_id!==policy.enforcement.accepted_signing.key_id) throw new Error("DENY: invalid key_id");
-    if(ev.sign.pub_ref!==policy.enforcement.accepted_signing.pub_ref) throw new Error("DENY: invalid pub_ref");
+    if(ev.sign.alg !== policy.enforcement.accepted_signing.alg) throw new Error("DENY: invalid signing algorithm");
+    if(ev.sign.key_id !== policy.enforcement.accepted_signing.key_id) throw new Error("DENY: invalid key_id");
+    if(ev.sign.pub_ref !== policy.enforcement.accepted_signing.pub_ref) throw new Error("DENY: invalid pub_ref");
 
-    const keyDoc=await fetch("../"+ev.sign.pub_ref,{cache:"no-store"}).then(r=>r.json());
-    const pubKey=await importKey(keyDoc.public_key_pem);
+    const keyUrl = withBust("../" + ev.sign.pub_ref, bust);
+    const keyDoc = await fetch(keyUrl, {cache:"no-store"}).then(r=>r.json());
 
-    const verified=await crypto.subtle.verify(
+    const imported = await importKeyAndFingerprint(keyDoc.public_key_pem);
+    keyFp = imported.fp;
+
+    const sigBytes = b64ToBytes(ev.sign.sig);
+    sigLen = sigBytes.length;
+
+    const msgBytes = toBytes(entry);
+    entryLen = msgBytes.length;
+
+    // hard expectation for Ed25519 signatures
+    if(sigLen !== 64) throw new Error("FAIL: signature length invalid (expected 64 bytes)");
+
+    sigVerified = await crypto.subtle.verify(
       {name:"Ed25519"},
-      pubKey,
-      b64ToBytes(ev.sign.sig),
-      toBytes(entry)
+      imported.key,
+      sigBytes,
+      msgBytes
     );
 
-    if(!verified) throw new Error("FAIL: signature invalid");
+    if(!sigVerified) throw new Error("FAIL: signature invalid");
   }
 
-  setStatus(true,"PASS (POLICY ENFORCED)");
-  $meta.textContent="event_id="+ev.event_id+" · "+head.latest.path;
-  log({ok:true,event_id:ev.event_id,entry_sha256:entry});
+  setStatus(true, "PASS (POLICY ENFORCED)");
+  $meta.textContent = "event_id=" + ev.event_id + " · " + path;
+  log({
+    ok: true,
+    bust,
+    event_id: ev.event_id,
+    path,
+    entry_sha256: entry,
+    signature: sigRequired && ev.event_id >= minId ? {
+      verified: Boolean(sigVerified),
+      sig_len: sigLen,
+      entry_bytes_len: entryLen,
+      key_fingerprint_sha256: keyFp
+    } : { required: false }
+  });
 
 }catch(e){
   setStatus(false,"FAIL (DENY)");
   $meta.textContent="fail-closed";
-  log(e.message||e);
+  log(e && e.message ? e.message : String(e));
 }
 
 })();
