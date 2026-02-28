@@ -11,223 +11,132 @@
       --bg:#0b0f14; --panel:#0f1620; --text:#e8eef7; --muted:#9fb0c3;
       --line:rgba(255,255,255,.10); --accent:#00ffe1; --bad:#ff4d6d;
       --radius:18px;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui;
     }
-    body{margin:0; background:var(--bg); color:var(--text); font-family:var(--sans);}
-    .wrap{max-width:980px; margin:0 auto; padding:28px 18px 60px;}
-    .hero{padding:22px 18px; border:1px solid var(--line); border-radius:var(--radius); background:rgba(15,22,32,.55);}
-    .k{letter-spacing:.14em; text-transform:uppercase; font-size:.78rem; color:var(--muted);}
-    h1{margin:10px 0 8px; font-size:1.6rem;}
-    .lead{margin:0; color:var(--muted); line-height:1.55;}
-    .card{margin-top:16px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel); padding:16px;}
-    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between;}
-    .badge{font-family:var(--mono); padding:8px 10px; border-radius:999px; border:1px solid var(--line);}
-    .pass{border-color:rgba(0,255,225,.4); color:var(--accent);}
-    .fail{border-color:rgba(255,77,109,.55); color:var(--bad);}
-    pre{margin:12px 0 0; padding:12px; background:rgba(0,0,0,.25); border:1px solid var(--line); border-radius:14px; overflow:auto; font-family:var(--mono); font-size:.9rem;}
-    a{color:var(--accent); text-decoration:none;}
-    a:hover{text-decoration:underline;}
-    .muted{color:var(--muted);}
-    .small{font-size:.9rem;}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);}
+    .wrap{max-width:980px;margin:0 auto;padding:28px 18px 60px;}
+    .hero{padding:22px 18px;border:1px solid var(--line);border-radius:var(--radius);background:rgba(15,22,32,.55);}
+    .k{letter-spacing:.14em;text-transform:uppercase;font-size:.78rem;color:var(--muted);}
+    h1{margin:10px 0 8px;font-size:1.6rem;}
+    .lead{margin:0;color:var(--muted);line-height:1.55;}
+    .card{margin-top:16px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);padding:16px;}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;}
+    .badge{font-family:var(--mono);padding:8px 10px;border-radius:999px;border:1px solid var(--line);}
+    .pass{border-color:rgba(0,255,225,.4);color:var(--accent);}
+    .fail{border-color:rgba(255,77,109,.55);color:var(--bad);}
+    pre{margin:12px 0 0;padding:12px;background:rgba(0,0,0,.25);border:1px solid var(--line);border-radius:14px;overflow:auto;font-family:var(--mono);font-size:.9rem;}
   </style>
 </head>
 
 <body>
-  <div class="wrap">
-    <section class="hero">
-      <div class="k">VERIFY · DETERMINISTIC · FAIL-CLOSED</div>
-      <h1>HBCE LLM Gateway — Verification</h1>
-      <p class="lead">
-        PASS/FAIL only. This page recomputes hashes and chain links for the latest event referenced by <span class="muted">head.json</span>.
-        If a signature is present, it verifies ED25519 against the referenced public key.
-      </p>
-    </section>
-
-    <section class="card">
-      <div class="row">
-        <div class="badge" id="statusBadge">RUNNING…</div>
-        <div class="badge muted small" id="metaBadge">—</div>
-      </div>
-      <pre id="log">Loading…</pre>
-    </section>
-
-    <p class="muted small" style="margin-top:14px">
-      Chain rule:
-      <span style="font-family:var(--mono)">sha256(prev|input_sha256|output_sha256|policy_pack_id|ts|ipr_ai|ipr_operator)</span><br/>
-      Signature rule (if present):
-      <span style="font-family:var(--mono)">ED25519.verify(pubkey, ascii(entry_sha256), base64(sig))</span>
+<div class="wrap">
+  <section class="hero">
+    <div class="k">VERIFY · POLICY ENFORCED · FAIL-CLOSED</div>
+    <h1>HBCE LLM Gateway — Verification</h1>
+    <p class="lead">
+      Hash chain, signature, and policy enforcement.
     </p>
-  </div>
+  </section>
+
+  <section class="card">
+    <div class="row">
+      <div class="badge" id="statusBadge">RUNNING…</div>
+      <div class="badge" id="metaBadge">—</div>
+    </div>
+    <pre id="log">Loading…</pre>
+  </section>
+</div>
 
 <script>
-(function(){
-  "use strict";
+(async function(){
+"use strict";
 
-  const $status = document.getElementById("statusBadge");
-  const $meta = document.getElementById("metaBadge");
-  const $log = document.getElementById("log");
+const $status = document.getElementById("statusBadge");
+const $meta = document.getElementById("metaBadge");
+const $log = document.getElementById("log");
 
-  function setStatus(ok, msg){
-    $status.textContent = msg;
-    $status.className = "badge " + (ok ? "pass" : "fail");
-  }
+function setStatus(ok,msg){
+  $status.textContent=msg;
+  $status.className="badge "+(ok?"pass":"fail");
+}
+function log(obj){
+  $log.textContent=(typeof obj==="string")?obj:JSON.stringify(obj,null,2);
+}
+function toBytes(s){return new TextEncoder().encode(String(s));}
+async function sha256Hex(s){
+  const b=await crypto.subtle.digest("SHA-256",toBytes(s));
+  return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");
+}
+function b64ToBytes(b64){
+  const bin=atob(b64);
+  return Uint8Array.from(bin, c=>c.charCodeAt(0));
+}
+function pemToDer(pem){
+  const m=pem.match(/BEGIN PUBLIC KEY-----([\s\S]*?)-----END PUBLIC KEY/);
+  if(!m) throw new Error("Invalid PEM");
+  const b64=m[1].replace(/\s+/g,"");
+  return b64ToBytes(b64);
+}
+async function importKey(pem){
+  return crypto.subtle.importKey("spki",pemToDer(pem),{name:"Ed25519"},false,["verify"]);
+}
 
-  function log(obj){
-    $log.textContent = (typeof obj === "string") ? obj : JSON.stringify(obj, null, 2);
-  }
+try{
 
-  function toUtf8Bytes(s){ return new TextEncoder().encode(String(s)); }
+  const policy=await fetch("../policy/UE-ΦΩ-001.json").then(r=>r.json());
+  const head=await fetch("../head.json").then(r=>r.json());
+  const ev=await fetch("../"+head.latest.path).then(r=>r.json());
 
-  async function sha256Hex(s){
-    const buf = await crypto.subtle.digest("SHA-256", toUtf8Bytes(s));
-    const arr = Array.from(new Uint8Array(buf));
-    return arr.map(b => b.toString(16).padStart(2,"0")).join("");
-  }
+  const inputHash=await sha256Hex(ev.input.canonical);
+  const outputHash=await sha256Hex(ev.output.canonical);
 
-  function normText(s){
-    return String(s ?? "").replace(/\r\n/g,"\n");
-  }
+  if(inputHash!==ev.input.sha256) throw new Error("FAIL: input.sha256 mismatch");
+  if(outputHash!==ev.output.sha256) throw new Error("FAIL: output.sha256 mismatch");
 
-  function b64ToBytes(b64){
-    const clean = String(b64 || "").trim();
-    if(!clean) return null;
-    const bin = atob(clean);
-    const out = new Uint8Array(bin.length);
-    for(let i=0;i<bin.length;i++) out[i] = bin.charCodeAt(i);
-    return out;
-  }
+  const base=[ev.chain.prev,inputHash,outputHash,ev.policy.policy_pack_id,ev.ts,ev.ipr_ai,ev.ipr_operator].join("|");
+  const entry=await sha256Hex(base);
 
-  function normalizePem(pem){
-    // keep exactly the PEM block, normalize line endings
-    const s = String(pem || "").replace(/\r\n/g,"\n").trim();
-    return s;
-  }
+  if(entry!==ev.chain.entry) throw new Error("FAIL: chain.entry mismatch");
 
-  function pemToDerBytes(pem){
-    // Extract base64 between PEM headers
-    const s = normalizePem(pem);
-    const m = s.match(/-----BEGIN PUBLIC KEY-----([\s\S]*?)-----END PUBLIC KEY-----/);
-    if(!m) throw new Error("DENY: invalid public_key_pem (missing PEM markers)");
-    const b64 = m[1].replace(/[\n\r\s]/g,"");
-    const bin = atob(b64);
-    const out = new Uint8Array(bin.length);
-    for(let i=0;i<bin.length;i++) out[i] = bin.charCodeAt(i);
-    return out;
-  }
+  const sigRequired=policy.enforcement.signature_required;
+  const minId=policy.enforcement.signature_required_from_event_id;
 
-  async function importEd25519PublicKeyFromPem(pem){
-    const der = pemToDerBytes(pem);
-    // SubjectPublicKeyInfo (SPKI) DER for Ed25519
-    return crypto.subtle.importKey(
-      "spki",
-      der,
-      { name: "Ed25519" },
-      false,
-      ["verify"]
+  if(sigRequired && ev.event_id>=minId){
+    if(!ev.sign || !ev.sign.sig) throw new Error("DENY: signature required");
+
+    if(ev.sign.alg!==policy.enforcement.accepted_signing.alg)
+      throw new Error("DENY: invalid signing algorithm");
+
+    if(ev.sign.key_id!==policy.enforcement.accepted_signing.key_id)
+      throw new Error("DENY: invalid key_id");
+
+    if(ev.sign.pub_ref!==policy.enforcement.accepted_signing.pub_ref)
+      throw new Error("DENY: invalid pub_ref");
+
+    const keyDoc=await fetch("../"+ev.sign.pub_ref).then(r=>r.json());
+    const pubKey=await importKey(keyDoc.public_key_pem);
+
+    const verified=await crypto.subtle.verify(
+      {name:"Ed25519"},
+      pubKey,
+      b64ToBytes(ev.sign.sig),
+      toBytes(entry)
     );
+
+    if(!verified) throw new Error("FAIL: signature invalid");
   }
 
-  async function verifyEd25519Signature({ publicKeyPem, messageAscii, sigB64 }){
-    const key = await importEd25519PublicKeyFromPem(publicKeyPem);
-    const sig = b64ToBytes(sigB64);
-    if(!sig) throw new Error("DENY: missing signature bytes");
-    const msg = toUtf8Bytes(String(messageAscii)); // IMPORTANT: ASCII hex string bytes, as signed in Linux via echo -n "<entry>"
-    const ok = await crypto.subtle.verify({ name: "Ed25519" }, key, sig, msg);
-    return ok;
-  }
+  setStatus(true,"PASS (POLICY ENFORCED)");
+  $meta.textContent="event_id="+ev.event_id;
+  log({ok:true,event_id:ev.event_id,entry_sha256:entry});
 
-  async function run(){
-    try{
-      const head = await fetch("../head.json", {cache:"no-store"}).then(r => r.json());
-      const path = head?.latest?.path;
-      if(!path) throw new Error("DENY: head.json missing latest.path");
+}catch(e){
+  setStatus(false,"FAIL (DENY)");
+  $meta.textContent="fail-closed";
+  log(e.message||e);
+}
 
-      const ev = await fetch("../" + path, {cache:"no-store"}).then(r => r.json());
-
-      const need = (k, v) => {
-        if(v === undefined || v === null || v === "") throw new Error("DENY: missing " + k);
-        return v;
-      };
-
-      const ts = need("ts", ev.ts);
-      const ipr_ai = need("ipr_ai", ev.ipr_ai);
-      const ipr_operator = need("ipr_operator", ev.ipr_operator);
-      const policy_pack_id = need("policy.policy_pack_id", ev.policy?.policy_pack_id);
-
-      const inputCanonical = need("input.canonical", ev.input?.canonical);
-      const outputCanonical = need("output.canonical", ev.output?.canonical);
-
-      const input_sha_stored = need("input.sha256", ev.input?.sha256);
-      const output_sha_stored = need("output.sha256", ev.output?.sha256);
-
-      const prev = need("chain.prev", ev.chain?.prev);
-      const entry_stored = need("chain.entry", ev.chain?.entry);
-
-      const input_sha = await sha256Hex(normText(inputCanonical));
-      const output_sha = await sha256Hex(normText(outputCanonical));
-
-      if(input_sha !== input_sha_stored) throw new Error("FAIL: input.sha256 mismatch");
-      if(output_sha !== output_sha_stored) throw new Error("FAIL: output.sha256 mismatch");
-
-      const base = [prev, input_sha, output_sha, policy_pack_id, ts, ipr_ai, ipr_operator].join("|");
-      const entry = await sha256Hex(base);
-
-      if(entry !== entry_stored) throw new Error("FAIL: chain.entry mismatch");
-
-      // Optional head cross-check
-      const headEntry = head?.latest?.entry_sha256;
-      if(headEntry && headEntry !== entry) throw new Error("FAIL: head.latest.entry_sha256 mismatch");
-
-      // Signature verification (optional, but strict if present)
-      const hasSig = Boolean(ev.sign && ev.sign.sig);
-      let sigOk = null;
-
-      if(hasSig){
-        const pubRef = need("sign.pub_ref", ev.sign?.pub_ref);
-        const keyDoc = await fetch("../" + pubRef, {cache:"no-store"}).then(r => r.json());
-
-        const keyPem = need("keys.public_key_pem", keyDoc?.public_key_pem);
-        const sigB64 = need("sign.sig", ev.sign?.sig);
-
-        sigOk = await verifyEd25519Signature({
-          publicKeyPem: keyPem,
-          messageAscii: entry,
-          sigB64
-        });
-
-        if(!sigOk) throw new Error("FAIL: ED25519 signature invalid");
-      }
-
-      $meta.textContent = `event_id=${ev.event_id} · ${path}`;
-      if(hasSig){
-        setStatus(true, sigOk ? "PASS (SIGNED)" : "FAIL (SIGNED)");
-      }else{
-        setStatus(true, "PASS (UNSIGNED)");
-      }
-
-      log({
-        ok: true,
-        event_id: ev.event_id,
-        path,
-        input_sha256: input_sha,
-        output_sha256: output_sha,
-        entry_sha256: entry,
-        signature: hasSig ? {
-          key_id: ev.sign?.key_id || null,
-          pub_ref: ev.sign?.pub_ref || null,
-          verified: Boolean(sigOk)
-        } : null
-      });
-
-    }catch(err){
-      setStatus(false, "FAIL (DENY)");
-      $meta.textContent = "fail-closed";
-      log(String(err && err.message ? err.message : err));
-    }
-  }
-
-  run();
 })();
 </script>
 
