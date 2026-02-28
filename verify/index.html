@@ -63,30 +63,48 @@ function setStatus(ok,msg){
 function log(obj){
   $log.textContent=(typeof obj==="string")?obj:JSON.stringify(obj,null,2);
 }
+
 function toBytes(s){return new TextEncoder().encode(String(s));}
+
 async function sha256Hex(s){
   const b=await crypto.subtle.digest("SHA-256",toBytes(s));
   return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");
 }
-function b64ToBytes(b64){
-  const bin=atob(b64);
-  return Uint8Array.from(bin, c=>c.charCodeAt(0));
+
+function normalizeB64(s){
+  let b = String(s || "").trim();
+  b = b.replace(/\s+/g,"");
+  b = b.replace(/-/g,"+").replace(/_/g,"/");
+  const pad = (4 - (b.length % 4)) % 4;
+  if(pad) b = b + "=".repeat(pad);
+  return b;
 }
+
+function b64ToBytes(b64){
+  const b = normalizeB64(b64);
+  try{
+    const bin = atob(b);
+    return Uint8Array.from(bin, c=>c.charCodeAt(0));
+  }catch(e){
+    throw new Error("FAIL: signature base64 decode error");
+  }
+}
+
 function pemToDer(pem){
-  const m=pem.match(/BEGIN PUBLIC KEY-----([\s\S]*?)-----END PUBLIC KEY/);
-  if(!m) throw new Error("Invalid PEM");
+  const m=String(pem||"").match(/BEGIN PUBLIC KEY-----([\s\S]*?)-----END PUBLIC KEY/);
+  if(!m) throw new Error("DENY: invalid public key PEM");
   const b64=m[1].replace(/\s+/g,"");
   return b64ToBytes(b64);
 }
+
 async function importKey(pem){
   return crypto.subtle.importKey("spki",pemToDer(pem),{name:"Ed25519"},false,["verify"]);
 }
 
 try{
-
-  const policy=await fetch("../policy/UE-ΦΩ-001.json").then(r=>r.json());
-  const head=await fetch("../head.json").then(r=>r.json());
-  const ev=await fetch("../"+head.latest.path).then(r=>r.json());
+  const policy=await fetch("../policy/UE-ΦΩ-001.json",{cache:"no-store"}).then(r=>r.json());
+  const head=await fetch("../head.json",{cache:"no-store"}).then(r=>r.json());
+  const ev=await fetch("../"+head.latest.path,{cache:"no-store"}).then(r=>r.json());
 
   const inputHash=await sha256Hex(ev.input.canonical);
   const outputHash=await sha256Hex(ev.output.canonical);
@@ -105,16 +123,11 @@ try{
   if(sigRequired && ev.event_id>=minId){
     if(!ev.sign || !ev.sign.sig) throw new Error("DENY: signature required");
 
-    if(ev.sign.alg!==policy.enforcement.accepted_signing.alg)
-      throw new Error("DENY: invalid signing algorithm");
+    if(ev.sign.alg!==policy.enforcement.accepted_signing.alg) throw new Error("DENY: invalid signing algorithm");
+    if(ev.sign.key_id!==policy.enforcement.accepted_signing.key_id) throw new Error("DENY: invalid key_id");
+    if(ev.sign.pub_ref!==policy.enforcement.accepted_signing.pub_ref) throw new Error("DENY: invalid pub_ref");
 
-    if(ev.sign.key_id!==policy.enforcement.accepted_signing.key_id)
-      throw new Error("DENY: invalid key_id");
-
-    if(ev.sign.pub_ref!==policy.enforcement.accepted_signing.pub_ref)
-      throw new Error("DENY: invalid pub_ref");
-
-    const keyDoc=await fetch("../"+ev.sign.pub_ref).then(r=>r.json());
+    const keyDoc=await fetch("../"+ev.sign.pub_ref,{cache:"no-store"}).then(r=>r.json());
     const pubKey=await importKey(keyDoc.public_key_pem);
 
     const verified=await crypto.subtle.verify(
@@ -128,7 +141,7 @@ try{
   }
 
   setStatus(true,"PASS (POLICY ENFORCED)");
-  $meta.textContent="event_id="+ev.event_id;
+  $meta.textContent="event_id="+ev.event_id+" · "+head.latest.path;
   log({ok:true,event_id:ev.event_id,entry_sha256:entry});
 
 }catch(e){
