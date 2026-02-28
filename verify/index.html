@@ -26,7 +26,12 @@
     .pass{border-color:rgba(0,255,225,.4);color:var(--accent);}
     .fail{border-color:rgba(255,77,109,.55);color:var(--bad);}
     pre{margin:12px 0 0;padding:12px;background:rgba(0,0,0,.25);border:1px solid var(--line);border-radius:14px;overflow:auto;font-family:var(--mono);font-size:.9rem;}
+    a{color:var(--accent);text-decoration:none;}
+    a:hover{text-decoration:underline;}
   </style>
+
+  <!-- TweetNaCl: pure JS Ed25519 (deterministic) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/nacl.min.js"></script>
 </head>
 
 <body>
@@ -34,7 +39,7 @@
   <section class="hero">
     <div class="k">VERIFY · POLICY ENFORCED · FAIL-CLOSED</div>
     <h1>HBCE LLM Gateway — Verification</h1>
-    <p class="lead">Hash chain, signature, and policy enforcement.</p>
+    <p class="lead">Hash chain, signature, and policy enforcement (Ed25519 via TweetNaCl).</p>
   </section>
 
   <section class="card">
@@ -55,21 +60,18 @@ const $meta = document.getElementById("metaBadge");
 const $log = document.getElementById("log");
 
 function setStatus(ok,msg){
-  $status.textContent=msg;
-  $status.className="badge "+(ok?"pass":"fail");
+  $status.textContent = msg;
+  $status.className = "badge " + (ok ? "pass" : "fail");
 }
 function log(obj){
-  $log.textContent=(typeof obj==="string")?obj:JSON.stringify(obj,null,2);
+  $log.textContent = (typeof obj === "string") ? obj : JSON.stringify(obj, null, 2);
 }
 
 function toBytes(s){ return new TextEncoder().encode(String(s)); }
 
-async function sha256HexFromBytes(bytes){
-  const b = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");
-}
 async function sha256Hex(s){
-  return sha256HexFromBytes(toBytes(s));
+  const buf = await crypto.subtle.digest("SHA-256", toBytes(s));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,"0")).join("");
 }
 
 function normalizeB64(s){
@@ -84,27 +86,31 @@ function normalizeB64(s){
 function b64ToBytes(b64){
   const b = normalizeB64(b64);
   let bin;
-  try{
-    bin = atob(b);
-  }catch{
-    throw new Error("FAIL: signature base64 decode error");
-  }
-  const u8 = Uint8Array.from(bin, c=>c.charCodeAt(0));
-  return u8;
+  try{ bin = atob(b); }
+  catch{ throw new Error("FAIL: signature base64 decode error"); }
+  return Uint8Array.from(bin, c => c.charCodeAt(0));
 }
 
-function pemToDer(pem){
+function pemToDerBytes(pem){
   const m = String(pem||"").match(/BEGIN PUBLIC KEY-----([\s\S]*?)-----END PUBLIC KEY/);
   if(!m) throw new Error("DENY: invalid public key PEM");
   const b64 = m[1].replace(/\s+/g,"");
   return b64ToBytes(b64);
 }
 
-async function importKeyAndFingerprint(pem){
-  const der = pemToDer(pem);
-  const fp = await sha256HexFromBytes(der); // fingerprint of SPKI DER
-  const key = await crypto.subtle.importKey("spki", der, {name:"Ed25519"}, false, ["verify"]);
-  return { key, fp };
+/**
+ * Ed25519 SPKI DER is typically:
+ * 302a300506032b6570032100 || <32-byte public key>
+ * We enforce this prefix and extract raw 32 bytes for TweetNaCl.
+ */
+function spkiDerToEd25519RawPub(der){
+  if(!(der instanceof Uint8Array)) der = new Uint8Array(der);
+  const prefix = Uint8Array.from([0x30,0x2a,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x03,0x21,0x00]);
+  if(der.length !== 44) throw new Error("DENY: unexpected SPKI length for Ed25519");
+  for(let i=0;i<prefix.length;i++){
+    if(der[i] !== prefix[i]) throw new Error("DENY: unexpected SPKI prefix for Ed25519");
+  }
+  return der.slice(12, 44);
 }
 
 function withBust(url, bust){
@@ -113,29 +119,36 @@ function withBust(url, bust){
   return u.toString();
 }
 
+async function waitForNaCl(){
+  // tweetnacl loads via defer; wait a moment if needed
+  for(let i=0;i<80;i++){
+    if(window.nacl && window.nacl.sign && window.nacl.sign.detached) return;
+    await new Promise(r => setTimeout(r, 25));
+  }
+  throw new Error("DENY: nacl library not available");
+}
+
 try{
+  await waitForNaCl();
+
   const bust = String(Date.now());
 
-  const policyUrl = withBust("../policy/UE-ΦΩ-001.json", bust);
-  const headUrl   = withBust("../head.json", bust);
-
-  const policy = await fetch(policyUrl, {cache:"no-store"}).then(r=>r.json());
-  const head   = await fetch(headUrl,   {cache:"no-store"}).then(r=>r.json());
+  const policy = await fetch(withBust("../policy/UE-ΦΩ-001.json", bust), {cache:"no-store"}).then(r=>r.json());
+  const head   = await fetch(withBust("../head.json", bust), {cache:"no-store"}).then(r=>r.json());
 
   const path = head?.latest?.path;
   if(!path) throw new Error("DENY: head.json missing latest.path");
 
-  const evUrl = withBust("../" + path, bust);
-  const ev    = await fetch(evUrl, {cache:"no-store"}).then(r=>r.json());
+  const ev = await fetch(withBust("../"+path, bust), {cache:"no-store"}).then(r=>r.json());
 
-  // recompute canonical hashes
+  // hashes
   const inputHash  = await sha256Hex(ev.input.canonical);
   const outputHash = await sha256Hex(ev.output.canonical);
 
   if(inputHash !== ev.input.sha256) throw new Error("FAIL: input.sha256 mismatch");
   if(outputHash !== ev.output.sha256) throw new Error("FAIL: output.sha256 mismatch");
 
-  // recompute entry
+  // entry
   const base = [
     ev.chain.prev,
     inputHash,
@@ -150,14 +163,9 @@ try{
 
   if(entry !== ev.chain.entry) throw new Error("FAIL: chain.entry mismatch");
 
-  // policy enforcement
+  // policy
   const sigRequired = policy.enforcement.signature_required;
   const minId = policy.enforcement.signature_required_from_event_id;
-
-  let sigVerified = null;
-  let sigLen = null;
-  let entryLen = null;
-  let keyFp = null;
 
   if(sigRequired && ev.event_id >= minId){
     if(!ev.sign || !ev.sign.sig) throw new Error("DENY: signature required");
@@ -166,50 +174,28 @@ try{
     if(ev.sign.key_id !== policy.enforcement.accepted_signing.key_id) throw new Error("DENY: invalid key_id");
     if(ev.sign.pub_ref !== policy.enforcement.accepted_signing.pub_ref) throw new Error("DENY: invalid pub_ref");
 
-    const keyUrl = withBust("../" + ev.sign.pub_ref, bust);
-    const keyDoc = await fetch(keyUrl, {cache:"no-store"}).then(r=>r.json());
+    const keyDoc = await fetch(withBust("../"+ev.sign.pub_ref, bust), {cache:"no-store"}).then(r=>r.json());
 
-    const imported = await importKeyAndFingerprint(keyDoc.public_key_pem);
-    keyFp = imported.fp;
+    const der = pemToDerBytes(keyDoc.public_key_pem);
+    const rawPub = spkiDerToEd25519RawPub(der);
 
     const sigBytes = b64ToBytes(ev.sign.sig);
-    sigLen = sigBytes.length;
+    if(sigBytes.length !== 64) throw new Error("FAIL: signature length invalid (expected 64 bytes)");
 
-    const msgBytes = toBytes(entry);
-    entryLen = msgBytes.length;
+    const msg = toBytes(entry); // ascii(entry) == utf-8(entry) for hex
+    if(msg.length !== 64) throw new Error("FAIL: entry bytes length invalid");
 
-    // hard expectation for Ed25519 signatures
-    if(sigLen !== 64) throw new Error("FAIL: signature length invalid (expected 64 bytes)");
-
-    sigVerified = await crypto.subtle.verify(
-      {name:"Ed25519"},
-      imported.key,
-      sigBytes,
-      msgBytes
-    );
-
-    if(!sigVerified) throw new Error("FAIL: signature invalid");
+    const ok = window.nacl.sign.detached.verify(msg, sigBytes, rawPub);
+    if(!ok) throw new Error("FAIL: signature invalid");
   }
 
   setStatus(true, "PASS (POLICY ENFORCED)");
   $meta.textContent = "event_id=" + ev.event_id + " · " + path;
-  log({
-    ok: true,
-    bust,
-    event_id: ev.event_id,
-    path,
-    entry_sha256: entry,
-    signature: sigRequired && ev.event_id >= minId ? {
-      verified: Boolean(sigVerified),
-      sig_len: sigLen,
-      entry_bytes_len: entryLen,
-      key_fingerprint_sha256: keyFp
-    } : { required: false }
-  });
+  log({ ok:true, event_id: ev.event_id, entry_sha256: entry });
 
 }catch(e){
-  setStatus(false,"FAIL (DENY)");
-  $meta.textContent="fail-closed";
+  setStatus(false, "FAIL (DENY)");
+  $meta.textContent = "fail-closed";
   log(e && e.message ? e.message : String(e));
 }
 
