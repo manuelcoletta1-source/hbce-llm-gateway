@@ -31,6 +31,6 @@
     "alg": "ED25519",
     "key_id": "JOKER-C2-RUNTIME-001",
     "pub_ref": "keys/joker-c2.pub.json",
-    "sig": null
+    "sig": "8RQDPdMy1KqpmHtYhbQ7FGE2iNHD4oNQdgHqJa/iirMP2JMSUpe939zcg0Qs8BMLuvrXF0fVcVizw682tzkuBQ=="
   }
 }
