@@ -14,6 +14,12 @@
       "ts": "2026-02-28T10:10:00+01:00",
       "path": "events/000002.json",
       "entry_sha256": "79be0fb234daa45d69804e4a23ecd3ac000fb693cef9c7d891e14938d61af73a"
+    },
+    {
+      "event_id": 3,
+      "ts": "2026-02-28T10:20:00+01:00",
+      "path": "events/000003.json",
+      "entry_sha256": "ff441259feb62c7a877ff48c54cb8fda248997a150c991db0760be9a399d8ec6"
     }
   ]
 }
