@@ -1,0 +1,35 @@
+{
+  "spec": "HBCE-LM-EVENT-0001",
+  "event_id": 1,
+  "ts": "2026-02-28T10:00:00+01:00",
+  "ipr_ai": "IPR-AI-0001",
+  "ipr_operator": "IPR-3",
+  "provider": {
+    "name": "openai",
+    "model_id": "gpt-4.1",
+    "request_id": null
+  },
+  "policy": {
+    "policy_pack_id": "UE-ΦΩ-001",
+    "mode": "FAIL_CLOSED",
+    "notes": ["GDPR_MIN", "HASH_ONLY", "APPEND_ONLY"]
+  },
+  "input": {
+    "canonical": "HBCE bootstrap test input. Canonical text v1.",
+    "sha256": "da73708c044d2f94950e4298f39803cf033d9f7ddd4409d1e386763a27ef37ab"
+  },
+  "output": {
+    "canonical": "HBCE bootstrap test output. Canonical text v1.",
+    "sha256": "aea762b4c88afde680a96a80d23573dfb70b19d7144bbb107a06b033eb56fdea"
+  },
+  "chain": {
+    "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+    "entry": "3c38bc7138688b3d4afa99d635592acdd32e2d62182547c80289db5cb02e252f",
+    "algo": "sha256(prev|input_sha256|output_sha256|policy_pack_id|ts|ipr_ai|ipr_operator)"
+  },
+  "sign": {
+    "alg": "ED25519",
+    "pub": null,
+    "sig": null
+  }
+}
