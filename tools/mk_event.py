@@ -3,9 +3,8 @@ import base64
 import hashlib
 import json
 import os
-import re
 import subprocess
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -26,24 +25,13 @@ def sha256_hex_utf8(s: str) -> str:
     b = s.replace("\r\n", "\n").encode("utf-8")
     return hashlib.sha256(b).hexdigest()
 
-def now_rome_iso():
-    # Europe/Rome is UTC+1 or UTC+2 depending on DST.
-    # For deterministic ops, accept that operator can override via CLI.
-    # Default: local time with offset from system (best effort).
+def now_iso_local():
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 def zero_pad_event_id(n: int) -> str:
     return f"{n:06d}"
 
-def ensure_no_tilde_in_paths():
-    # user constraint: never use "~" in commands; here we just sanity-check inputs
-    return
-
 def openssl_sign_ed25519(privkey_path: str, message_ascii: str) -> str:
-    """
-    Signs the ASCII message bytes (no newline) using ED25519 private key via openssl.
-    Returns signature in base64 (single line).
-    """
     if not os.path.isfile(privkey_path):
         die(f"Missing private key: {privkey_path}")
 
@@ -53,7 +41,6 @@ def openssl_sign_ed25519(privkey_path: str, message_ascii: str) -> str:
     with open(payload_path, "wb") as f:
         f.write(message_ascii.encode("ascii"))
 
-    # Sign
     cmd = [
         "openssl", "pkeyutl", "-sign",
         "-inkey", privkey_path,
@@ -68,7 +55,6 @@ def openssl_sign_ed25519(privkey_path: str, message_ascii: str) -> str:
     with open(sig_bin_path, "rb") as f:
         sig_b64 = base64.b64encode(f.read()).decode("ascii")
 
-    # Cleanup temp
     try:
         os.remove(payload_path)
         os.remove(sig_bin_path)
@@ -82,7 +68,7 @@ def main():
     ap = argparse.ArgumentParser(description="HBCE LLM Gateway — deterministic event builder (hash+chain+ED25519).")
     ap.add_argument("--input", required=True, help="Input canonical text (string).")
     ap.add_argument("--output", required=True, help="Output canonical text (string).")
-    ap.add_argument("--ts", default=None, help="ISO timestamp with offset (e.g. 2026-02-28T10:20:00+01:00). If omitted, uses local time.")
+    ap.add_argument("--ts", default=None, help="ISO timestamp with offset. If omitted, uses local time.")
     ap.add_argument("--ipr-ai", default="IPR-AI-0001")
     ap.add_argument("--ipr-operator", default="IPR-3")
     ap.add_argument("--policy-pack-id", default="UE-ΦΩ-001")
@@ -114,7 +100,7 @@ def main():
         die("head.json missing latest.entry_sha256 or latest.event_id")
 
     event_id = int(prev_event_id) + 1
-    ts = args.ts or now_rome_iso()
+    ts = args.ts or now_iso_local()
 
     input_canon = args.input.replace("\r\n", "\n")
     output_canon = args.output.replace("\r\n", "\n")
@@ -125,8 +111,9 @@ def main():
     base = "|".join([prev_entry, input_sha, output_sha, args.policy_pack_id, ts, args.ipr_ai, args.ipr_operator])
     entry = hashlib.sha256(base.encode("utf-8")).hexdigest()
 
-    # Sign ASCII(entry)
     sig_b64 = openssl_sign_ed25519(args.privkey, entry)
+
+    ev_path_rel = f"events/{zero_pad_event_id(event_id)}.json"
 
     ev = {
         "spec": "HBCE-LM-EVENT-0001",
@@ -165,11 +152,8 @@ def main():
         }
     }
 
-    ev_path_rel = f"events/{zero_pad_event_id(event_id)}.json"
-    ev_path = os.path.join(REPO_ROOT, ev_path_rel)
-    write_json(ev_path, ev)
+    write_json(os.path.join(REPO_ROOT, ev_path_rel), ev)
 
-    # Update head
     head["ts"] = ts
     head["latest"] = {
         "event_id": event_id,
@@ -178,7 +162,6 @@ def main():
     }
     write_json(head_path, head)
 
-    # Update registry append
     if "entries" not in registry or not isinstance(registry["entries"], list):
         die("registry.json missing entries array")
 
