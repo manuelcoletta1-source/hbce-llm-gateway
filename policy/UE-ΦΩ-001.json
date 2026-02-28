@@ -1,0 +1,23 @@
+{
+  "spec": "HBCE-POLICY-0001",
+  "policy_pack_id": "UE-ΦΩ-001",
+  "posture": ["UE_FIRST", "AUDIT_FIRST", "FAIL_CLOSED", "HASH_ONLY", "APPEND_ONLY", "GDPR_MIN"],
+  "rules": [
+    {
+      "id": "REQ_IPR_OPERATOR",
+      "if_missing": ["ipr_operator"],
+      "action": "DENY"
+    },
+    {
+      "id": "REQ_IPR_AI",
+      "if_missing": ["ipr_ai"],
+      "action": "DENY"
+    },
+    {
+      "id": "REQ_CANONICAL_TEXT",
+      "if_missing": ["input.canonical", "output.canonical"],
+      "action": "DENY"
+    }
+  ],
+  "notes": "Phase 0 bootstrap policy. Signature enforcement added in Phase 1."
+}
