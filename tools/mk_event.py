@@ -8,7 +8,7 @@ from datetime import datetime
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-def die(msg: str, code: int = 1):
+def die(msg: str):
     raise SystemExit(msg)
 
 def read_json(path: str):
@@ -66,38 +66,27 @@ def openssl_sign_ed25519(privkey_path: str, message_ascii: str) -> str:
 def main():
     import argparse
     ap = argparse.ArgumentParser(description="HBCE LLM Gateway — deterministic event builder (hash+chain+ED25519).")
-    ap.add_argument("--input", required=True, help="Input canonical text (string).")
-    ap.add_argument("--output", required=True, help="Output canonical text (string).")
-    ap.add_argument("--ts", default=None, help="ISO timestamp with offset. If omitted, uses local time.")
+    ap.add_argument("--input", required=True)
+    ap.add_argument("--output", required=True)
+    ap.add_argument("--ts", default=None)
     ap.add_argument("--ipr-ai", default="IPR-AI-0001")
     ap.add_argument("--ipr-operator", default="IPR-3")
     ap.add_argument("--policy-pack-id", default="UE-ΦΩ-001")
     ap.add_argument("--provider-name", default="openai")
     ap.add_argument("--model-id", default="gpt-4.1")
-    ap.add_argument("--privkey", default="/home/manuelcoletta1/joker-c2.key", help="Absolute path to ED25519 private key (DO NOT COMMIT).")
+    ap.add_argument("--privkey", default="/home/manuelcoletta1/joker-c2.key")
     ap.add_argument("--key-id", default="JOKER-C2-RUNTIME-001")
     ap.add_argument("--pub-ref", default="keys/joker-c2.pub.json")
     args = ap.parse_args()
 
     head_path = os.path.join(REPO_ROOT, "head.json")
     registry_path = os.path.join(REPO_ROOT, "registry.json")
-    events_dir = os.path.join(REPO_ROOT, "events")
-
-    if not os.path.isfile(head_path):
-        die("Missing head.json in repo root.")
-    if not os.path.isfile(registry_path):
-        die("Missing registry.json in repo root.")
-    if not os.path.isdir(events_dir):
-        die("Missing events/ directory in repo root.")
 
     head = read_json(head_path)
     registry = read_json(registry_path)
 
-    latest = head.get("latest") or {}
-    prev_entry = latest.get("entry_sha256")
-    prev_event_id = latest.get("event_id")
-    if not prev_entry or prev_event_id is None:
-        die("head.json missing latest.entry_sha256 or latest.event_id")
+    prev_entry = head["latest"]["entry_sha256"]
+    prev_event_id = head["latest"]["event_id"]
 
     event_id = int(prev_event_id) + 1
     ts = args.ts or now_iso_local()
@@ -162,9 +151,6 @@ def main():
     }
     write_json(head_path, head)
 
-    if "entries" not in registry or not isinstance(registry["entries"], list):
-        die("registry.json missing entries array")
-
     registry["entries"].append({
         "event_id": event_id,
         "ts": ts,
@@ -176,10 +162,8 @@ def main():
     print(json.dumps({
         "ok": True,
         "event_id": event_id,
-        "event_path": ev_path_rel,
         "entry_sha256": entry,
-        "signed": True,
-        "key_id": args.key_id
+        "signed": True
     }, indent=2))
 
 if __name__ == "__main__":
