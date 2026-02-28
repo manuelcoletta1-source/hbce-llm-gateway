@@ -1,0 +1,8 @@
+{
+  "spec": "HBCE-LM-KEY-0001",
+  "key_id": "JOKER-C2-RUNTIME-001",
+  "alg": "ED25519",
+  "owner": "IPR-AI-0001",
+  "created": "2026-02-28T12:40:00+01:00",
+  "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA3N85Z95dzVV9RJnoj+GQm0YwPSDad9avIrwGTqtsipM=\n-----END PUBLIC KEY-----"
+}
