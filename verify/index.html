@@ -40,6 +40,7 @@
       <h1>HBCE LLM Gateway — Verification</h1>
       <p class="lead">
         PASS/FAIL only. This page recomputes hashes and chain links for the latest event referenced by <span class="muted">head.json</span>.
+        If a signature is present, it verifies ED25519 against the referenced public key.
       </p>
     </section>
 
@@ -52,8 +53,10 @@
     </section>
 
     <p class="muted small" style="margin-top:14px">
-      Computation rule:
-      <span style="font-family:var(--mono)">sha256(prev|input_sha256|output_sha256|policy_pack_id|ts|ipr_ai|ipr_operator)</span>
+      Chain rule:
+      <span style="font-family:var(--mono)">sha256(prev|input_sha256|output_sha256|policy_pack_id|ts|ipr_ai|ipr_operator)</span><br/>
+      Signature rule (if present):
+      <span style="font-family:var(--mono)">ED25519.verify(pubkey, ascii(entry_sha256), base64(sig))</span>
     </p>
   </div>
 
@@ -84,6 +87,54 @@
 
   function normText(s){
     return String(s ?? "").replace(/\r\n/g,"\n");
+  }
+
+  function b64ToBytes(b64){
+    const clean = String(b64 || "").trim();
+    if(!clean) return null;
+    const bin = atob(clean);
+    const out = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function normalizePem(pem){
+    // keep exactly the PEM block, normalize line endings
+    const s = String(pem || "").replace(/\r\n/g,"\n").trim();
+    return s;
+  }
+
+  function pemToDerBytes(pem){
+    // Extract base64 between PEM headers
+    const s = normalizePem(pem);
+    const m = s.match(/-----BEGIN PUBLIC KEY-----([\s\S]*?)-----END PUBLIC KEY-----/);
+    if(!m) throw new Error("DENY: invalid public_key_pem (missing PEM markers)");
+    const b64 = m[1].replace(/[\n\r\s]/g,"");
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  async function importEd25519PublicKeyFromPem(pem){
+    const der = pemToDerBytes(pem);
+    // SubjectPublicKeyInfo (SPKI) DER for Ed25519
+    return crypto.subtle.importKey(
+      "spki",
+      der,
+      { name: "Ed25519" },
+      false,
+      ["verify"]
+    );
+  }
+
+  async function verifyEd25519Signature({ publicKeyPem, messageAscii, sigB64 }){
+    const key = await importEd25519PublicKeyFromPem(publicKeyPem);
+    const sig = b64ToBytes(sigB64);
+    if(!sig) throw new Error("DENY: missing signature bytes");
+    const msg = toUtf8Bytes(String(messageAscii)); // IMPORTANT: ASCII hex string bytes, as signed in Linux via echo -n "<entry>"
+    const ok = await crypto.subtle.verify({ name: "Ed25519" }, key, sig, msg);
+    return ok;
   }
 
   async function run(){
@@ -128,8 +179,33 @@
       const headEntry = head?.latest?.entry_sha256;
       if(headEntry && headEntry !== entry) throw new Error("FAIL: head.latest.entry_sha256 mismatch");
 
+      // Signature verification (optional, but strict if present)
+      const hasSig = Boolean(ev.sign && ev.sign.sig);
+      let sigOk = null;
+
+      if(hasSig){
+        const pubRef = need("sign.pub_ref", ev.sign?.pub_ref);
+        const keyDoc = await fetch("../" + pubRef, {cache:"no-store"}).then(r => r.json());
+
+        const keyPem = need("keys.public_key_pem", keyDoc?.public_key_pem);
+        const sigB64 = need("sign.sig", ev.sign?.sig);
+
+        sigOk = await verifyEd25519Signature({
+          publicKeyPem: keyPem,
+          messageAscii: entry,
+          sigB64
+        });
+
+        if(!sigOk) throw new Error("FAIL: ED25519 signature invalid");
+      }
+
       $meta.textContent = `event_id=${ev.event_id} · ${path}`;
-      setStatus(true, (ev.sign?.sig ? "PASS (SIGNED)" : "PASS (UNSIGNED)"));
+      if(hasSig){
+        setStatus(true, sigOk ? "PASS (SIGNED)" : "FAIL (SIGNED)");
+      }else{
+        setStatus(true, "PASS (UNSIGNED)");
+      }
+
       log({
         ok: true,
         event_id: ev.event_id,
@@ -137,8 +213,13 @@
         input_sha256: input_sha,
         output_sha256: output_sha,
         entry_sha256: entry,
-        signed: Boolean(ev.sign?.sig)
+        signature: hasSig ? {
+          key_id: ev.sign?.key_id || null,
+          pub_ref: ev.sign?.pub_ref || null,
+          verified: Boolean(sigOk)
+        } : null
       });
+
     }catch(err){
       setStatus(false, "FAIL (DENY)");
       $meta.textContent = "fail-closed";
