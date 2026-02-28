@@ -26,11 +26,10 @@
     .pass{border-color:rgba(0,255,225,.4);color:var(--accent);}
     .fail{border-color:rgba(255,77,109,.55);color:var(--bad);}
     pre{margin:12px 0 0;padding:12px;background:rgba(0,0,0,.25);border:1px solid var(--line);border-radius:14px;overflow:auto;font-family:var(--mono);font-size:.9rem;}
-    a{color:var(--accent);text-decoration:none;}
-    a:hover{text-decoration:underline;}
+    .muted{color:var(--muted);}
   </style>
 
-  <!-- TweetNaCl: pure JS Ed25519 (deterministic) -->
+  <!-- TweetNaCl: pure JS Ed25519 -->
   <script defer src="https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/nacl.min.js"></script>
 </head>
 
@@ -39,13 +38,13 @@
   <section class="hero">
     <div class="k">VERIFY · POLICY ENFORCED · FAIL-CLOSED</div>
     <h1>HBCE LLM Gateway — Verification</h1>
-    <p class="lead">Hash chain, signature, and policy enforcement (Ed25519 via TweetNaCl).</p>
+    <p class="lead">Hash chain, signature, and policy enforcement (with forensics on FAIL).</p>
   </section>
 
   <section class="card">
     <div class="row">
       <div class="badge" id="statusBadge">RUNNING…</div>
-      <div class="badge" id="metaBadge">—</div>
+      <div class="badge muted" id="metaBadge">—</div>
     </div>
     <pre id="log">Loading…</pre>
   </section>
@@ -69,10 +68,11 @@ function log(obj){
 
 function toBytes(s){ return new TextEncoder().encode(String(s)); }
 
-async function sha256Hex(s){
-  const buf = await crypto.subtle.digest("SHA-256", toBytes(s));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,"0")).join("");
+async function sha256HexFromBytes(bytes){
+  const buf = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
 }
+async function sha256Hex(s){ return sha256HexFromBytes(toBytes(s)); }
 
 function normalizeB64(s){
   let b = String(s || "").trim();
@@ -82,7 +82,6 @@ function normalizeB64(s){
   if(pad) b = b + "=".repeat(pad);
   return b;
 }
-
 function b64ToBytes(b64){
   const b = normalizeB64(b64);
   let bin;
@@ -90,7 +89,6 @@ function b64ToBytes(b64){
   catch{ throw new Error("FAIL: signature base64 decode error"); }
   return Uint8Array.from(bin, c => c.charCodeAt(0));
 }
-
 function pemToDerBytes(pem){
   const m = String(pem||"").match(/BEGIN PUBLIC KEY-----([\s\S]*?)-----END PUBLIC KEY/);
   if(!m) throw new Error("DENY: invalid public key PEM");
@@ -99,14 +97,13 @@ function pemToDerBytes(pem){
 }
 
 /**
- * Ed25519 SPKI DER is typically:
- * 302a300506032b6570032100 || <32-byte public key>
- * We enforce this prefix and extract raw 32 bytes for TweetNaCl.
+ * Ed25519 SPKI DER expected:
+ * 302a300506032b6570032100 || <32-byte pub>
  */
 function spkiDerToEd25519RawPub(der){
   if(!(der instanceof Uint8Array)) der = new Uint8Array(der);
   const prefix = Uint8Array.from([0x30,0x2a,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x03,0x21,0x00]);
-  if(der.length !== 44) throw new Error("DENY: unexpected SPKI length for Ed25519");
+  if(der.length !== 44) throw new Error("DENY: unexpected SPKI length for Ed25519 (got "+der.length+")");
   for(let i=0;i<prefix.length;i++){
     if(der[i] !== prefix[i]) throw new Error("DENY: unexpected SPKI prefix for Ed25519");
   }
@@ -120,26 +117,48 @@ function withBust(url, bust){
 }
 
 async function waitForNaCl(){
-  // tweetnacl loads via defer; wait a moment if needed
-  for(let i=0;i<80;i++){
-    if(window.nacl && window.nacl.sign && window.nacl.sign.detached) return;
-    await new Promise(r => setTimeout(r, 25));
+  for(let i=0;i<120;i++){
+    if(window.nacl && window.nacl.sign && window.nacl.sign.detached && window.nacl.sign.detached.verify) return;
+    await new Promise(r=>setTimeout(r, 25));
   }
   throw new Error("DENY: nacl library not available");
 }
 
+const forensic = {
+  bust: null,
+  urls: {},
+  event_id: null,
+  path: null,
+  entry: null,
+  entry_len: null,
+  entry_bytes_len: null,
+  sig_b64_norm_head: null,
+  sig_b64_norm_tail: null,
+  sig_bytes_len: null,
+  key_spki_sha256: null,
+  key_raw_pub_hex: null
+};
+
 try{
   await waitForNaCl();
 
-  const bust = String(Date.now());
+  forensic.bust = String(Date.now());
 
-  const policy = await fetch(withBust("../policy/UE-ΦΩ-001.json", bust), {cache:"no-store"}).then(r=>r.json());
-  const head   = await fetch(withBust("../head.json", bust), {cache:"no-store"}).then(r=>r.json());
+  forensic.urls.policy = withBust("../policy/UE-ΦΩ-001.json", forensic.bust);
+  forensic.urls.head   = withBust("../head.json", forensic.bust);
+
+  const policy = await fetch(forensic.urls.policy, {cache:"no-store"}).then(r=>r.json());
+  const head   = await fetch(forensic.urls.head,   {cache:"no-store"}).then(r=>r.json());
 
   const path = head?.latest?.path;
   if(!path) throw new Error("DENY: head.json missing latest.path");
 
-  const ev = await fetch(withBust("../"+path, bust), {cache:"no-store"}).then(r=>r.json());
+  forensic.path = path;
+  forensic.urls.event = withBust("../"+path, forensic.bust);
+
+  const ev = await fetch(forensic.urls.event, {cache:"no-store"}).then(r=>r.json());
+
+  forensic.event_id = ev.event_id;
 
   // hashes
   const inputHash  = await sha256Hex(ev.input.canonical);
@@ -160,43 +179,58 @@ try{
   ].join("|");
 
   const entry = await sha256Hex(base);
-
   if(entry !== ev.chain.entry) throw new Error("FAIL: chain.entry mismatch");
 
-  // policy
+  forensic.entry = entry;
+  forensic.entry_len = String(entry).length;
+
+  const msg = toBytes(entry);
+  forensic.entry_bytes_len = msg.length;
+
+  // policy enforcement
   const sigRequired = policy.enforcement.signature_required;
   const minId = policy.enforcement.signature_required_from_event_id;
 
   if(sigRequired && ev.event_id >= minId){
     if(!ev.sign || !ev.sign.sig) throw new Error("DENY: signature required");
-
     if(ev.sign.alg !== policy.enforcement.accepted_signing.alg) throw new Error("DENY: invalid signing algorithm");
     if(ev.sign.key_id !== policy.enforcement.accepted_signing.key_id) throw new Error("DENY: invalid key_id");
     if(ev.sign.pub_ref !== policy.enforcement.accepted_signing.pub_ref) throw new Error("DENY: invalid pub_ref");
 
-    const keyDoc = await fetch(withBust("../"+ev.sign.pub_ref, bust), {cache:"no-store"}).then(r=>r.json());
+    forensic.urls.key = withBust("../"+ev.sign.pub_ref, forensic.bust);
+    const keyDoc = await fetch(forensic.urls.key, {cache:"no-store"}).then(r=>r.json());
 
     const der = pemToDerBytes(keyDoc.public_key_pem);
-    const rawPub = spkiDerToEd25519RawPub(der);
+    forensic.key_spki_sha256 = await sha256HexFromBytes(der);
 
-    const sigBytes = b64ToBytes(ev.sign.sig);
+    const rawPub = spkiDerToEd25519RawPub(der);
+    forensic.key_raw_pub_hex = Array.from(rawPub).map(b=>b.toString(16).padStart(2,"0")).join("");
+
+    const sigNorm = normalizeB64(ev.sign.sig);
+    forensic.sig_b64_norm_head = sigNorm.slice(0, 16);
+    forensic.sig_b64_norm_tail = sigNorm.slice(-16);
+
+    const sigBytes = b64ToBytes(sigNorm);
+    forensic.sig_bytes_len = sigBytes.length;
+
     if(sigBytes.length !== 64) throw new Error("FAIL: signature length invalid (expected 64 bytes)");
 
-    const msg = toBytes(entry); // ascii(entry) == utf-8(entry) for hex
-    if(msg.length !== 64) throw new Error("FAIL: entry bytes length invalid");
-
+    // Ed25519 verify (TweetNaCl)
     const ok = window.nacl.sign.detached.verify(msg, sigBytes, rawPub);
     if(!ok) throw new Error("FAIL: signature invalid");
   }
 
   setStatus(true, "PASS (POLICY ENFORCED)");
   $meta.textContent = "event_id=" + ev.event_id + " · " + path;
-  log({ ok:true, event_id: ev.event_id, entry_sha256: entry });
+  log({ ok:true, event_id: ev.event_id, entry_sha256: entry, forensic });
 
 }catch(e){
   setStatus(false, "FAIL (DENY)");
   $meta.textContent = "fail-closed";
-  log(e && e.message ? e.message : String(e));
+  log({
+    error: (e && e.message) ? e.message : String(e),
+    forensic
+  });
 }
 
 })();
